@@ -1,0 +1,12 @@
+{
+  "name": "@ares/e2e-sync-suite",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test:sync": "node sync-conflict.mjs"
+  },
+  "dependencies": {
+    "selenium-webdriver": "^4.25.0",
+    "webdriverio": "^9.2.4"
+  }
+}

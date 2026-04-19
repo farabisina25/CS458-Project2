@@ -1,0 +1,11 @@
+{
+  "name": "@ares/e2e-mobile-appium",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test tests/*.test.js"
+  },
+  "dependencies": {
+    "webdriverio": "^9.2.4"
+  }
+}
