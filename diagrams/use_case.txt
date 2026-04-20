@@ -1,0 +1,55 @@
+flowchart LR
+    %% Define Actors
+    Admin(["👤 Admin"])
+    MobileUser(["👤 Mobile User"])
+
+    %% System Boundary
+    subgraph Ecosystem [Unified Survey Ecosystem]
+        
+        subgraph Web [Web Architect Subsystem]
+            direction TB
+            UC1([Design Dynamic Surveys])
+            UC2([Define Conditional Logic DAG])
+            UC3([Update/Modify Schema])
+        end
+
+        subgraph Engine [Orchestration Engine]
+            direction TB
+            UC8([Calculate Visibility RCLR])
+            UC9([Resolve Schema Conflicts GBCR])
+        end
+
+        subgraph Mobile [Mobile Client Subsystem]
+            direction TB
+            UC4([Login to Application])
+            UC5([Take Dynamic Survey])
+            UC6([Submit Completed Survey])
+            UC7([Experience State Recovery or Rollback])
+        end
+    end
+
+    %% Actor to Use Case Relationships
+    Admin --- UC1
+    Admin --- UC2
+    Admin --- UC3
+
+    MobileUser --- UC4
+    MobileUser --- UC5
+    MobileUser --- UC6
+    MobileUser --- UC7
+
+    %% Internal System Dependencies (Includes / Extends)
+    UC5 -. "<< includes >>" .-> UC8
+    UC5 -. "<< extends >>(If valid path)" .-> UC6
+    
+    %% Conflict & Versioning Logic
+    UC3 -. "<< triggers >>" .-> UC9
+    UC5 -. "<< triggers >>" .-> UC9
+    UC9 -. "<< includes >>" .-> UC7
+
+    %% Styling
+    classDef actor fill:#ececff,stroke:#9370db,stroke-width:2px;
+    class Admin,MobileUser actor;
+    
+    classDef usecase fill:#f9f9f9,stroke:#333,stroke-width:1px;
+    class UC1,UC2,UC3,UC4,UC5,UC6,UC7,UC8,UC9 usecase;

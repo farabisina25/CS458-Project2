@@ -1,0 +1,17 @@
+---
+config:
+  layout: fixed
+---
+flowchart TB
+    Start(["Start"]) --> Login["Login"]
+    Login -- Successful --> FetchSchemafromAPI["FetchSchemafromAPI"]
+    FetchSchemafromAPI --> ComputeVisibleNodes["Compute visible nodes"]
+    ComputeVisibleNodes --> RenderQuestions["Render Questions"]
+    RenderQuestions -- User Answers a Question --> VersionCheck{"Schema v++ detected?"}
+    VersionCheck -- YES --> RunGBCR["Run GBCR"]
+    RunGBCR --> ComputeVisibleNodes
+    VersionCheck -- NO --> AnswerCheck{"All required visible answered?"}
+    AnswerCheck -- YES --> ShowSend["Show send button"]
+    AnswerCheck -- NO --> AnswerCheck
+    ShowSend --> Submit["Submit Survey"]
+    Submit --> End(["End"])

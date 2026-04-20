@@ -1,0 +1,39 @@
+stateDiagram-v2
+    direction TB
+    
+    %% Initial States
+    [*] --> Uninitialized : User Login
+    Uninitialized --> ActiveSession : Start Dynamic Survey
+    
+    %% Main Survey Loop
+    state ActiveSession {
+        [*] --> AwaitingInput : Render Nodes
+        
+        AwaitingInput --> EvaluatingLogic : User selects/changes answer
+        
+        EvaluatingLogic --> AwaitingInput : RCLR Updates Visibility(Path Incomplete)
+        EvaluatingLogic --> ReadyToSubmit : RCLR Confirms Valid Path\n("Send" appears)
+    }
+    
+    %% Conflict Resolution Interrupt
+    ActiveSession --> ConflictState : Detects Schema Mutation
+    
+    state ConflictState {
+        direction LR
+        [*] --> AnalyzingGraph
+        note right of AnalyzingGraph: Graph-Based Conflict\nResolution (GBCR)
+        
+        AnalyzingGraph --> AtomicRecovery : Soft Conflict
+        AnalyzingGraph --> SessionRollback : Logic Inconsistency
+        
+        AtomicRecovery --> Resolving : Map existing answers\nto new DAG
+        SessionRollback --> Resolving : Revert to last\nvalid stable node
+        
+        Resolving --> [*]
+    }
+    
+    %% Return to session or finish
+    ConflictState --> ActiveSession : UI State Restored
+    
+    ReadyToSubmit --> Submitted : User clicks "Send"
+    Submitted --> [*]
