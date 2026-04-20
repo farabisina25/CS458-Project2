@@ -61,7 +61,10 @@ export function App() {
   };
 
   const addQuestion = () => {
-    const id = `q${Object.keys(draft.schema.questions).length + 1}`;
+    const existing = Object.keys(draft.schema.questions);
+    let n = existing.length + 1;
+    while (existing.includes(`q${n}`)) n++;
+    const id = `q${n}`;
     const q: SurveyQuestion = {
       id,
       kind: "single_choice",
@@ -80,12 +83,16 @@ export function App() {
     if (ids.length < 2) return;
     const from = ids[ids.length - 2];
     const to = ids[ids.length - 1];
-    const edge: SurveyEdge = {
-      id: `e${draft.schema.edges.length + 1}`,
-      from,
-      to,
-      condition: { type: "equals", questionId: from, value: "Option A" },
-    };
+    const fromQ = draft.schema.questions[from];
+    // Only add condition for choice questions; rating/text edges are unconditional
+    const condition: SurveyEdge["condition"] =
+      fromQ?.options && fromQ.options.length > 0
+        ? { type: "equals", questionId: from, value: fromQ.options[0] }
+        : undefined;
+    const existing = draft.schema.edges;
+    let n = existing.length + 1;
+    while (existing.some((e) => e.id === `e${n}`)) n++;
+    const edge: SurveyEdge = { id: `e${n}`, from, to, condition };
     dispatch({ type: "add_edge", edge });
   };
 
@@ -122,9 +129,27 @@ export function App() {
             role="button"
             tabIndex={0}
           >
-            <strong>{q.title}</strong>
-            <div className="muted">
-              {q.kind} · {q.id}
+            <div className="row" style={{ justifyContent: "space-between" }}>
+              <div>
+                <strong>{q.title}</strong>
+                <div className="muted">
+                  {q.kind} · {q.id}
+                </div>
+              </div>
+              {Object.keys(draft.schema.questions).length > 1 ? (
+                <button
+                  type="button"
+                  className="danger"
+                  data-testid={`remove-question-${q.id}`}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    dispatch({ type: "remove_question", id: q.id });
+                  }}
+                  style={{ alignSelf: "flex-start" }}
+                >
+                  ✕
+                </button>
+              ) : null}
             </div>
           </div>
         ))}

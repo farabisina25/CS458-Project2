@@ -66,6 +66,16 @@ export function resolveVisibility(
     return { visibleIds: visible, consistent: false, conflictCodes };
   }
 
+  // Standalone questions: if a question is not referenced as a target in ANY edge,
+  // it is an independent/root question and should always be visible.
+  const allTargets = new Set(schema.edges.map((e) => e.to));
+  for (const qid of Object.keys(schema.questions)) {
+    if (qid === schema.entryId) continue; // already visited
+    if (!allTargets.has(qid)) {
+      visible.add(qid);
+    }
+  }
+
   // Orphan check: every visible node must be reachable from entry via *some* path
   // (visit() already enforces this). Secondary: "zombie" = visible in UI but parent path broken —
   // we approximate by ensuring all conditional edges used had their referent answered.
@@ -94,7 +104,7 @@ function orphanHeuristic(
   for (const id of visible) {
     if (id === schema.entryId) continue;
     const incoming = schema.edges.filter((e) => e.to === id);
-    if (incoming.length === 0) return false;
+    if (incoming.length === 0) continue; // standalone question — not an orphan
     const anyOk = incoming.some((e) => {
       if (!visible.has(e.from)) return false;
       return edgeSatisfied(e.condition, answers);
