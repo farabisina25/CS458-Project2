@@ -1,0 +1,243 @@
+%% ============================================================
+%% Sequence Diagram 1: Survey Publishing Flow
+%% (Web Architect → API → Store)
+%% ============================================================
+
+sequenceDiagram
+    autonumber
+    actor Designer as Web Architect User
+    participant WebApp as WebArchitectApp
+    participant Reducer as architectReducer
+    participant WebAPI as api.ts
+    participant DAG as DAGValidator
+    participant API as Fastify API
+    participant Store as SurveyStore
+
+    Designer->>WebApp: Click "Add question"
+    WebApp->>Reducer: dispatch(upsert_question)
+    Reducer-->>WebApp: updated ArchitectDraft
+
+    Designer->>WebApp: Click "Link last two"
+    WebApp->>Reducer: dispatch(add_edge)
+    Reducer-->>WebApp: updated ArchitectDraft
+
+    Designer->>WebApp: Edit question title/kind/options
+    WebApp->>Reducer: dispatch(upsert_question)
+    Reducer-->>WebApp: updated ArchitectDraft
+
+    Designer->>WebApp: Click "Publish"
+    WebApp->>DAG: assertAcyclic(draft.schema)
+    alt Cycle detected
+        DAG-->>WebApp: throw Error("CYCLE_DETECTED")
+        WebApp-->>Designer: Show error message
+    else Acyclic
+        DAG-->>WebApp: OK
+        WebApp->>WebAPI: publishSurvey(schema)
+        WebAPI->>API: PUT /surveys/:id (JSON body)
+        API->>DAG: assertAcyclic(body)
+        DAG-->>API: OK
+        API->>Store: publish(schema)
+        Store->>Store: Increment version, append to history
+        Store-->>API: SurveySchema (new version)
+        API-->>WebAPI: 200 OK + SurveySchema
+        WebAPI-->>WebApp: SurveySchema
+        WebApp->>Reducer: dispatch(load_schema, saved)
+        Reducer-->>WebApp: updated ArchitectDraft
+        WebApp-->>Designer: Show "Published vN"
+    end
+
+%% ============================================================
+%% Sequence Diagram 2: Mobile App Login & Survey Loading
+%% ============================================================
+
+sequenceDiagram
+    autonumber
+    actor User as Mobile User
+    participant Login as LoginScreen
+    participant App as MobileApp
+    participant Survey as SurveyFlow
+    participant API as Fastify API
+    participant Store as SurveyStore
+    participant RCLR as RCLREngine
+
+    User->>Login: Enter credentials
+    User->>Login: Tap "Sign In"
+    Login->>Login: Simulate authentication (800ms)
+    Login-->>User: Show "Login successful!"
+    Login->>App: onLogin() callback
+    App->>Survey: Render SurveyFlow
+
+    Survey->>API: GET /surveys/live-demo
+    API->>Store: getLatest("live-demo")
+    Store-->>API: SurveySchema
+    API-->>Survey: SurveySchema
+
+    Survey->>Survey: Initialize SessionState
+    Note over Survey: schemaId, schemaVersion,<br/>empty answers, empty trail,<br/>currentQuestionId = entryId
+
+    Survey->>RCLR: resolveVisibility(schema, answers)
+    RCLR-->>Survey: RclrResult (visibleIds)
+    Survey-->>User: Render visible questions
+
+%% ============================================================
+%% Sequence Diagram 3: Mobile Answer Selection & RCLR
+%% ============================================================
+
+sequenceDiagram
+    autonumber
+    actor User as Mobile User
+    participant Survey as SurveyFlow
+    participant RCLR as RCLREngine
+    participant DAG as DAGValidator
+
+    User->>Survey: Select "A" for q1 (single_choice)
+    Survey->>Survey: setAnswer("q1", "A")
+    Note over Survey: Update answers, add q1 to trail
+
+    Survey->>RCLR: resolveVisibility(schema, answers)
+    RCLR->>RCLR: Build edgesByFrom adjacency map
+    RCLR->>RCLR: visit(entryId = "q1")
+    RCLR->>DAG: edgeSatisfied(e1.condition, answers)
+    Note over DAG: q1 == "A" → true
+    DAG-->>RCLR: true
+    RCLR->>RCLR: visit("q2") — Path A detail visible
+    RCLR->>DAG: edgeSatisfied(e2.condition, answers)
+    Note over DAG: q1 == "B" → false
+    DAG-->>RCLR: false
+    Note over RCLR: q3 NOT visited → hidden
+    RCLR->>RCLR: orphanHeuristic check
+    RCLR-->>Survey: RclrResult {visibleIds: {q1, q2}, consistent: true}
+
+    Survey->>RCLR: canShowSubmit(schema, answers, rclr)
+    Note over RCLR: q2 required but unanswered
+    RCLR-->>Survey: false
+
+    Survey-->>User: Show q1, q2 — hide q3<br/>Submit button hidden
+
+%% ============================================================
+%% Sequence Diagram 4: GBCR — Mid-Session Schema Conflict
+%% (Polling detects new version published by Web Architect)
+%% ============================================================
+
+sequenceDiagram
+    autonumber
+    actor User as Mobile User
+    participant Survey as SurveyFlow
+    participant API as Fastify API
+    participant Store as SurveyStore
+    participant GBCR as GBCRMigrator
+    participant RCLR as RCLREngine
+
+    Note over Survey: Polling every 2.5s
+
+    Survey->>API: GET /surveys/live-demo
+    API->>Store: getLatest("live-demo")
+    Store-->>API: SurveySchema (v2 — new!)
+    API-->>Survey: SurveySchema v2
+
+    Survey->>Survey: Detect version change (v1 → v2)
+    Survey->>GBCR: migrateSessionForNewSchema(prevSchema, nextSchema, session)
+
+    GBCR->>GBCR: Remove answers for deleted questions
+    GBCR->>GBCR: Filter trail to valid questions
+    GBCR->>GBCR: Build provisional SessionState
+
+    GBCR->>RCLR: resolveVisibility(nextSchema, nextAnswers)
+    RCLR-->>GBCR: RclrResult
+
+    alt RCLR consistent
+        GBCR-->>Survey: {outcome: "recovered_atomic", session, droppedAnswersFor, notes}
+    else RCLR inconsistent
+        GBCR->>GBCR: findLastStableNode(schema, answers, trail)
+        loop Walk trail backwards
+            GBCR->>RCLR: resolveVisibility(schema, prefixAnswers)
+            RCLR-->>GBCR: RclrResult
+            Note over GBCR: Check consistent + visible
+        end
+        GBCR->>GBCR: Trim answers & trail to stable node
+        GBCR-->>Survey: {outcome: "rollback_stable", session, stableNodeId, conflictCodes, notes}
+    end
+
+    Survey->>Survey: setSchema(v2), setSession(migrated.session)
+    Survey->>RCLR: resolveVisibility(latest, migrated.session.answers)
+    RCLR-->>Survey: RclrResult
+
+    alt Consistent
+        Survey-->>User: Show GBCR banner with migration notes
+    else Inconsistent
+        Survey-->>User: Show GBCR banner + RCLR conflict strip
+    end
+
+%% ============================================================
+%% Sequence Diagram 5: Web Architect Initial Load
+%% ============================================================
+
+sequenceDiagram
+    autonumber
+    actor Designer as Web Architect User
+    participant WebApp as WebArchitectApp
+    participant WebAPI as api.ts
+    participant API as Fastify API
+    participant Store as SurveyStore
+    participant Reducer as architectReducer
+
+    Designer->>WebApp: Open http://localhost:5173
+    WebApp-->>Designer: Show "Loading architect…"
+
+    WebApp->>WebAPI: fetchLatestSurvey("live-demo")
+    WebAPI->>API: GET /surveys/live-demo
+    API->>Store: getLatest("live-demo")
+    Store-->>API: SurveySchema
+    API-->>WebAPI: SurveySchema
+    WebAPI-->>WebApp: SurveySchema
+
+    WebApp->>Reducer: dispatch(load_schema, schema)
+    Reducer-->>WebApp: ArchitectDraft with loaded schema
+    WebApp->>WebApp: setHydrated(true)
+    WebApp-->>Designer: Render survey DAG panel + canvas
+
+%% ============================================================
+%% Sequence Diagram 6: Cross-Platform Sync Conflict (E2E)
+%% ============================================================
+
+sequenceDiagram
+    autonumber
+    actor Mobile as Mobile User
+    actor Web as Web Designer
+    participant MobileApp as SurveyFlow (Mobile)
+    participant WebApp as WebArchitectApp
+    participant API as Fastify API
+    participant Store as SurveyStore
+    participant GBCR as GBCRMigrator
+    participant RCLR as RCLREngine
+
+    Mobile->>MobileApp: Login & load survey v1
+    MobileApp->>API: GET /surveys/live-demo
+    API-->>MobileApp: SurveySchema v1
+    Mobile->>MobileApp: Select q1 = "A" (shows q2, hides q3)
+
+    Note over Web,WebApp: Meanwhile on web...
+    Web->>WebApp: Swap edge targets (A→q3, B→q2)
+    Web->>WebApp: Click Publish
+    WebApp->>API: PUT /surveys/live-demo
+    API->>Store: publish(conflicting schema)
+    Store-->>API: SurveySchema v2
+    API-->>WebApp: v2
+
+    Note over MobileApp: 2.5s polling interval
+    MobileApp->>API: GET /surveys/live-demo
+    API-->>MobileApp: SurveySchema v2
+
+    MobileApp->>GBCR: migrateSessionForNewSchema(v1, v2, session)
+    GBCR->>RCLR: resolveVisibility(v2, answers)
+    Note over RCLR: q1="A" now leads to q3<br/>but user answered q2 → STALE_ANSWER
+    RCLR-->>GBCR: RclrResult (inconsistent)
+
+    GBCR->>GBCR: findLastStableNode → rollback to q1
+    GBCR-->>MobileApp: {outcome: "rollback_stable", stableNodeId: "q1"}
+
+    MobileApp->>RCLR: resolveVisibility(v2, trimmedAnswers)
+    RCLR-->>MobileApp: RclrResult
+
+    MobileApp-->>Mobile: Show GBCR banner + conflict details
+    Note over Mobile: q2 and q3 NOT both visible<br/>(mutually exclusive branches preserved)

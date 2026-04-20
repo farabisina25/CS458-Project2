@@ -1,0 +1,262 @@
+classDiagram
+    direction TB
+
+    %% ──────────────────────────────────────────────
+    %% survey-core / types
+    %% ──────────────────────────────────────────────
+
+    class QuestionKind {
+        <<enumeration>>
+        single_choice
+        multi_choice
+        rating
+        text
+    }
+
+    class SurveyQuestion {
+        +String id
+        +QuestionKind kind
+        +String title
+        +String[] options
+        +Number maxRating
+        +Boolean required
+    }
+
+    class EdgeCondition {
+        <<union>>
+        +String type
+        +String questionId
+        +String value
+        +String[] values
+    }
+
+    class SurveyEdge {
+        +String id
+        +String from
+        +String to
+        +EdgeCondition condition
+    }
+
+    class SurveySchema {
+        +String id
+        +Number version
+        +String entryId
+        +Record~string, SurveyQuestion~ questions
+        +SurveyEdge[] edges
+    }
+
+    class SessionState {
+        +String schemaId
+        +Number schemaVersion
+        +SessionAnswers answers
+        +String[] trail
+        +String currentQuestionId
+    }
+
+    class RclrResult {
+        +Set~string~ visibleIds
+        +Boolean consistent
+        +RclrConflictCode[] conflictCodes
+    }
+
+    class RclrConflictCode {
+        <<enumeration>>
+        ORPHAN_VISIBLE
+        MISSING_ENTRY
+        CYCLE_DETECTED
+        CONDITION_UNKNOWN_QUESTION
+        STALE_ANSWER
+    }
+
+    class GbcrMigrationResult {
+        <<union>>
+        +String outcome
+        +SessionState session
+        +String[] droppedAnswersFor
+        +String stableNodeId
+        +RclrConflictCode[] conflictCodes
+        +String[] notes
+    }
+
+    SurveyQuestion --> QuestionKind
+    SurveyEdge --> EdgeCondition
+    SurveySchema "1" *-- "*" SurveyQuestion : questions
+    SurveySchema "1" *-- "*" SurveyEdge : edges
+    SessionState --> SurveySchema : references via schemaId
+    RclrResult --> RclrConflictCode
+    GbcrMigrationResult --> SessionState : session
+    GbcrMigrationResult --> RclrConflictCode
+
+    %% ──────────────────────────────────────────────
+    %% survey-core / algorithms
+    %% ──────────────────────────────────────────────
+
+    class DAGValidator {
+        <<module: dag.ts>>
+        +assertAcyclic(schema: SurveySchema) void
+        +adjacencyOutgoing(edges: SurveyEdge[]) Map
+        +edgeSatisfied(condition: EdgeCondition, answers: Record) Boolean
+    }
+
+    class RCLREngine {
+        <<module: rclr.ts>>
+        +resolveVisibility(schema: SurveySchema, answers: SessionAnswers) RclrResult
+        -orphanHeuristic(schema, answers, visible) Boolean
+        +canShowSubmit(schema, answers, rclr) Boolean
+    }
+
+    class GBCRMigrator {
+        <<module: gbcr.ts>>
+        +migrateSessionForNewSchema(prev: SurveySchema, next: SurveySchema, session: SessionState) GbcrMigrationResult
+        -findLastStableNode(schema, answers, trail) String
+    }
+
+    DAGValidator --> SurveySchema
+    DAGValidator --> SurveyEdge
+    RCLREngine --> DAGValidator : uses edgeSatisfied
+    RCLREngine --> SurveySchema
+    RCLREngine --> RclrResult
+    GBCRMigrator --> RCLREngine : uses resolveVisibility
+    GBCRMigrator --> SurveySchema
+    GBCRMigrator --> SessionState
+    GBCRMigrator --> GbcrMigrationResult
+
+    %% ──────────────────────────────────────────────
+    %% apps/api
+    %% ──────────────────────────────────────────────
+
+    class SurveyStore {
+        <<module: store.ts>>
+        -Map~string, Stored~ surveys
+        -Map~string, SessionState~ sessions
+        +getLatest(surveyId: String) SurveySchema
+        +getVersion(surveyId: String, version: Number) SurveySchema
+        +publish(schema: SurveySchema) SurveySchema
+        +seedIfEmpty(schema: SurveySchema) SurveySchema
+        +putSession(key: String, state: SessionState) void
+        +getSession(key: String) SessionState
+    }
+
+    class Stored {
+        +SurveySchema[] history
+    }
+
+    class FastifyAPI {
+        <<module: index.ts>>
+        +GET /health
+        +GET /surveys/:id
+        +GET /surveys/:id/versions/:v
+        +PUT /surveys/:id
+        +POST /surveys/:id/sync
+        +POST /debug/session
+        +GET /debug/session
+    }
+
+    FastifyAPI --> SurveyStore : uses
+    FastifyAPI --> DAGValidator : assertAcyclic on PUT
+    FastifyAPI --> GBCRMigrator : migrateSessionForNewSchema on sync
+    FastifyAPI --> RCLREngine : resolveVisibility on sync
+    SurveyStore --> Stored
+    SurveyStore --> SurveySchema
+    SurveyStore --> SessionState
+
+    %% ──────────────────────────────────────────────
+    %% apps/web-architect
+    %% ──────────────────────────────────────────────
+
+    class ArchitectDraft {
+        +SurveySchema schema
+        +String selectedQuestionId
+    }
+
+    class ArchitectAction {
+        <<union>>
+        select_question
+        upsert_question
+        remove_question
+        add_edge
+        remove_edge
+        set_entry
+        load_schema
+    }
+
+    class ArchitectReducer {
+        <<module: architectReducer.ts>>
+        +architectReducer(state: ArchitectDraft, action: ArchitectAction) ArchitectDraft
+    }
+
+    class WebArchitectApp {
+        <<React Component: App.tsx>>
+        -ArchitectDraft draft
+        -Boolean hydrated
+        -String error
+        -String status
+        +onPublish() void
+        +addQuestion() void
+        +addEdge() void
+    }
+
+    class Editor {
+        <<React Component>>
+        +SurveyQuestion question
+        +onChange(q: SurveyQuestion) void
+    }
+
+    class WebAPI {
+        <<module: api.ts>>
+        +fetchLatestSurvey(id: String) SurveySchema
+        +publishSurvey(schema: SurveySchema) SurveySchema
+    }
+
+    ArchitectReducer --> ArchitectDraft
+    ArchitectReducer --> ArchitectAction
+    WebArchitectApp --> ArchitectReducer : useReducer
+    WebArchitectApp --> ArchitectDraft
+    WebArchitectApp --> WebAPI : fetch & publish
+    WebArchitectApp --> Editor : renders
+    WebArchitectApp --> DAGValidator : assertAcyclic before publish
+    Editor --> SurveyQuestion
+    WebAPI ..> FastifyAPI : HTTP PUT & GET
+
+    %% ──────────────────────────────────────────────
+    %% apps/mobile
+    %% ──────────────────────────────────────────────
+
+    class LoginScreen {
+        <<React Native Component>>
+        -String loginType
+        -String identifier
+        -String pass
+        -Boolean loading
+        -Object status
+        +handleLogin() void
+        +onLogin() void
+    }
+
+    class MobileApp {
+        <<React Native Component: App.tsx>>
+        -Boolean loggedIn
+    }
+
+    class SurveyFlow {
+        <<React Native Component>>
+        -SurveySchema schema
+        -SessionState session
+        -String rclrNote
+        -GbcrMigrationResult gbcr
+        +bootstrap() void
+        +setAnswer(qid, value) void
+        +toggleMultiChoice(qid, option) void
+    }
+
+    MobileApp --> LoginScreen : renders if not logged in
+    MobileApp --> SurveyFlow : renders if logged in
+    SurveyFlow --> RCLREngine : resolveVisibility locally
+    SurveyFlow --> GBCRMigrator : migrateSessionForNewSchema on poll
+    SurveyFlow --> RCLREngine : canShowSubmit
+    SurveyFlow ..> FastifyAPI : HTTP GET polling /surveys/:id
+    SurveyFlow --> SurveySchema
+    SurveyFlow --> SessionState
+    SurveyFlow --> GbcrMigrationResult
+    SurveyFlow --> RclrResult
+    LoginScreen --> MobileApp : onLogin callback
