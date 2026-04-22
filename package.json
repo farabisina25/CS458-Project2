@@ -1,7 +1,7 @@
 {
   "name": "ares-x-survey-ecosystem",
   "private": true,
-  "workspaces": ["packages/*", "apps/*", "e2e/*"],
+  "workspaces": ["packages/*", "apps/api", "apps/web-architect", "e2e/*"],
   "scripts": {
     "test": "npm run test -w @ares/survey-core && npm run test -w @ares/web-architect",
     "test:core": "npm run test -w @ares/survey-core",
